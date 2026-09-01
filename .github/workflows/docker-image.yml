@@ -15,12 +15,12 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Build the Docker image
-      run: docker build . --file Dockerfile --tag my-app:${{ github.sha }}
+      run: docker build . --file Dockerfile --tag ${{ secrets.DOCKERHUB_USERNAME }}/my-app:${{ github.sha }}
 
     - name: Log in to Docker Hub
       run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
-      
+
     - name: Push the Docker image
       run: |
-        docker tag my-app:${{ github.sha }} my-app:2.0
-        docker push my-app:2.0
+        docker tag ${{ secrets.DOCKERHUB_USERNAME }}/my-app:${{ github.sha }} ${{ secrets.DOCKERHUB_USERNAME }}/my-app:2.0
+        docker push ${{ secrets.DOCKERHUB_USERNAME }}/my-app:2.0
