@@ -18,11 +18,9 @@ jobs:
       run: docker build . --file Dockerfile --tag my-app:${{ github.sha }}
 
     - name: Log in to Docker Hub
-      if: github.event_name == 'push'
       run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
       
     - name: Push the Docker image
-      if: github.event_name == 'push'
       run: |
         docker tag my-app:${{ github.sha }} my-app:2.0
         docker push my-app:2.0
