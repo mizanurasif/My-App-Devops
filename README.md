@@ -65,6 +65,68 @@ docker compose -f my-app.yaml down       # stop
 - App: http://localhost:3000
 - Mongo Express: http://localhost:8080
 
+### Kubernetes architecture
+
+Everything runs in the `default` namespace. The Ingress is the only way in from outside the cluster; every Service is `ClusterIP` (internal only).
+
+```mermaid
+flowchart TD
+    user(["Browser<br/>http://myapp.com"])
+
+    subgraph cluster["minikube cluster"]
+        ing["Ingress: my-app-ingress<br/>class nginx · host myapp.com"]
+
+        subgraph web["App"]
+            appSvc["Service: my-app-service<br/>ClusterIP :3000"]
+            appPod["Pod: my-app-deployment<br/>image my-app:2.0 · :3000"]
+        end
+
+        subgraph admin["Admin UI"]
+            meSvc["Service: mongo-express-service<br/>ClusterIP :8081"]
+            mePod["Pod: mongo-express-deployment<br/>image mongo-express · :8081"]
+        end
+
+        subgraph db["Database"]
+            dbSvc["Service: mongo-service<br/>ClusterIP :27017"]
+            dbPod["Pod: mongo-deployment<br/>image mongo · :27017"]
+        end
+
+        secret[("Secret: mongo-secret<br/>mongo-user, mongo-password,<br/>mongo-url, mongo-user-account")]
+        cm[("ConfigMap: mongo-config<br/>mongo-url = mongo-service")]
+    end
+
+    user --> ing
+    ing -- "path /" --> appSvc --> appPod
+    ing -- "path /mongo-express" --> meSvc --> mePod
+    appPod -- "MONGODB_URI" --> dbSvc
+    mePod -- "ME_CONFIG_MONGODB_URL" --> dbSvc
+    dbSvc --> dbPod
+
+    secret -. env .-> appPod
+    secret -. env .-> mePod
+    secret -. env .-> dbPod
+    cm -. env .-> mePod
+```
+
+| File                 | Resources                                    | Port  | Reads from                         |
+| -------------------- | -------------------------------------------- | ----- | ---------------------------------- |
+| `my-app-ingress.yaml`| Ingress `my-app-ingress`                      | 80    | routes `/` and `/mongo-express`    |
+| `my-app.yaml`        | Deployment + Service `my-app-service`         | 3000  | `mongo-secret`                     |
+| `mongo-express.yaml` | Deployment + Service `mongo-express-service`  | 8081  | `mongo-secret`, `mongo-config`     |
+| `mongo.yaml`         | Deployment + Service `mongo-service`          | 27017 | `mongo-secret`                     |
+| `mongo-secret.yaml`  | Secret `mongo-secret`                         | –     | –                                  |
+| `mongo-config.yaml`  | ConfigMap `mongo-config`                      | –     | –                                  |
+
+How a request flows:
+
+1. The browser resolves `myapp.com` (from the hosts file) and hits the NGINX Ingress controller on port 80.
+2. The Ingress matches the path: `/mongo-express...` goes to `mongo-express-service:8081`, everything else goes to `my-app-service:3000`.
+3. Each Service load-balances to its Pod through the `app:` label selector.
+4. The app and Mongo Express reach MongoDB at `mongo-service:27017`. The hostname comes from the `mongo-url` connection string in `mongo-secret` (`mongodb://admin:password@mongo-service:27017/?authSource=admin`).
+5. MongoDB creates its root user on first start from `mongo-user` / `mongo-password` in `mongo-secret`.
+
+> MongoDB has no volume, so its data is lost when the pod restarts. Each Deployment runs 1 replica.
+
 ### 3. Run on Kubernetes (minikube)
 
 **Load the image first.** minikube has its own image store, so a local build is invisible to it — skipping this gives `ImagePullBackOff`(optional):
