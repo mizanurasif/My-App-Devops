@@ -86,16 +86,81 @@ kubectl get pods
 kubectl get endpoints    # must show IPs, not <none>
 ```
 
-Open in the browser:
+### 4. Expose with Ingress
 
-```bash
-minikube service my-app-service         # the app
-minikube service mongo-express-service  # Mongo Express (login: admin / pass)
+Both Services are now plain `ClusterIP` (the `type: NodePort` and `nodePort` lines were removed), so they are no longer reachable from outside the cluster on their own. A single Ingress (`kubernetes/my-app-ingress.yaml`) is the one entry point, and routes by path on the host `myapp.com`:
+
+| URL                                | Goes to                          |
+| ---------------------------------- | -------------------------------- |
+| `http://myapp.com/`                | `my-app-service:3000`            |
+| `http://myapp.com/mongo-express/`  | `mongo-express-service:8081`     |
+
+```yaml
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: myapp.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: my-app-service
+            port:
+              number: 3000
+      - path: /mongo-express
+        pathType: Prefix
+        backend:
+          service:
+            name: mongo-express-service
+            port:
+              number: 8081
 ```
 
-Keep that terminal open — it runs a tunnel and closing it kills the link.
+Mongo Express is served under a sub-path, so it has to know its own base URL — otherwise it generates links and CSS/JS paths at `/` and they land on the Next.js app instead. That is why `kubernetes/mongo-express.yaml` now sets:
 
-> On Windows/Mac the Docker driver puts the node inside a VM, so `http://192.168.49.2:30100` will **not** open. Use `minikube service` (or `kubectl port-forward service/my-app-service 3000:3000`). On Linux the node IP works directly.
+```yaml
+- name: ME_CONFIG_SITE_BASEURL
+  value: /mongo-express/
+```
+
+**Steps:**
+
+1. Enable the NGINX Ingress controller (one time per cluster):
+
+   ```bash
+   minikube addons enable ingress
+   kubectl get pods -n ingress-nginx      # wait for the controller pod to be Running
+   ```
+
+2. Apply the manifests (includes the Ingress) and check it got an address:
+
+   ```bash
+   kubectl apply -f ./kubernetes
+   kubectl get ingress
+   ```
+
+3. Point `myapp.com` at the cluster. Edit the hosts file — on Windows `C:\Windows\System32\drivers\etc\hosts` (open the editor as Administrator), on Linux/Mac `/etc/hosts`:
+
+   ```
+   127.0.0.1 myapp.com
+   ```
+
+   > On Linux you can use the node IP instead (`minikube ip`, e.g. `192.168.49.2 myapp.com`) and skip the tunnel.
+
+4. On Windows/Mac (Docker driver) start a tunnel so port 80 reaches the Ingress controller. Keep this terminal open:
+
+   ```bash
+   minikube tunnel
+   ```
+
+5. Open in the browser:
+
+   - App: http://myapp.com
+   - Mongo Express: http://myapp.com/mongo-express/ (login: admin / pass)
+
+> Quick test without the Ingress: `kubectl port-forward service/my-app-service 3000:3000` still works on ClusterIP Services. `minikube service ...` and `http://192.168.49.2:30100` no longer apply, since there is no NodePort any more.
 
 Tear down:
 
@@ -109,4 +174,5 @@ kubectl delete -f ./kubernetes
 kubectl describe pod <pod-name>    # why a pod won't start (image pull, config errors)
 kubectl logs <pod-name>            # app output, only once the container has started
 kubectl rollout restart deployment/my-app-deployment   # needed after a Secret/ConfigMap change
+kubectl describe ingress my-app-ingress   # shows the routing rules and which backends it resolved
 ```
